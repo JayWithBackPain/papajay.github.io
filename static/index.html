@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>爸爸做玩具給小孩玩</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            font-family: 'Microsoft JhengHei', sans-serif;
+            background: linear-gradient(135deg, #fff5e6 0%, #ffe4b5 100%);
+            color: #5c4033;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            color: #8b4513;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .projects {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            padding: 1rem;
+        }
+
+        .project-card {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 15px;
+            padding: 1.5rem;
+            text-align: center;
+            text-decoration: none;
+            color: #5c4033;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: 2px solid #ffd700;
+        }
+
+        .project-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+            background: rgba(255, 255, 255, 1);
+        }
+
+        .project-card h2 {
+            margin: 0 0 1rem 0;
+            color: #8b4513;
+        }
+
+        .project-card p {
+            margin: 0;
+            color: #6b4423;
+            line-height: 1.6;
+        }
+
+        .coming-soon {
+            background: rgba(255, 255, 255, 0.7);
+            border: 2px dashed #ffd700;
+        }
+
+        .coming-soon h2 {
+            color: #8b4513;
+        }
+
+        .coming-soon p {
+            color: #6b4423;
+            font-style: italic;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            .projects {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>爸爸做玩具給小孩玩</h1>
+        <div class="projects">
+            <a href="./breath.html" class="project-card">
+                <h2>呼吸燈</h2>
+                <p>用聲音控制燈光的互動裝置，讓孩子體驗聲音與視覺的奇妙連結。</p>
+            </a>
+            <a href="./hand.html" class="project-card">
+                <h2>手掌煙火</h2>
+                <p>用手掌觸碰可愛的卡通角色，觸發繽紛的煙火效果，創造歡樂的互動體驗。</p>
+            </a>
+            <div class="project-card coming-soon">
+                <h2>新作品籌備中</h2>
+                <p>更多有趣的互動玩具即將推出...</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html> 
