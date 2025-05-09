@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>手掌煙火</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Microsoft JhengHei', sans-serif;
+        }
+
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #video {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .status {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+
+        .start-button {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 15px 30px;
+            font-size: 18px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            z-index: 1000;
+        }
+
+        .start-button:hover {
+            background: #45a049;
+        }
+
+        .start-button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .exit-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #f44336;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            z-index: 1000;
+            display: none;
+        }
+
+        .exit-button:hover {
+            background: #d32f2f;
+        }
+
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            text-align: center;
+            z-index: 1000;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .character {
+            position: absolute;
+            width: 150px;
+            height: 150px;
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            transition: transform 0.3s ease;
+        }
+
+        .character:hover {
+            transform: scale(1.1);
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .character.bounce {
+            animation: bounce 0.5s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <video id="video" playsinline></video>
+        <canvas id="canvas"></canvas>
+        <div class="status" id="status">等待開始...</div>
+        <button class="start-button" id="startButton">開始遊戲</button>
+        <button class="exit-button" id="exitButton">離開遊戲</button>
+        <div class="loading" id="loading" style="display: none;">正在載入模型...</div>
+    </div>
+
+    <audio id="fireworkSound" src="https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3"></audio>
+
+    <script>
+        let video;
+        let canvas;
+        let ctx;
+        let hands;
+        let camera;
+        let isPlaying = false;
+        let boxes = [];
+        let fireworks = [];
+        let score = 0;
+        let modelLoaded = false;
+        let fireworkSound;
+
+        // 卡通角色圖片列表
+        const characters = [
+            'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f431.png', // 貓咪
+            'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f436.png', // 狗狗
+            'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f438.png', // 青蛙
+            'https://cdn.jsdelivr.net/gh/twitter/twitter-emoji@14.0.2/assets/72x72/1f42d.png', // 熊貓
+            'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f42e.png', // 牛
+            'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f43b.png', // 熊
+        ];
+
+        // 角色類
+        class Character {
+            constructor() {
+                this.size = 150;
+                // 獲取視窗大小
+                const windowWidth = window.innerWidth;
+                const windowHeight = window.innerHeight;
+                
+                // 計算安全邊距（避免方塊太靠近邊緣）
+                const margin = 20;
+                
+                // 計算可用的生成範圍
+                const maxX = windowWidth - this.size - margin;
+                const maxY = windowHeight - this.size - margin;
+                
+                // 確保方塊在可見範圍內生成
+                this.x = Math.max(margin, Math.min(maxX, Math.random() * maxX));
+                this.y = Math.max(margin, Math.min(maxY, Math.random() * maxY));
+                
+                // 創建元素
+                this.element = document.createElement('div');
+                this.element.className = 'character';
+                this.element.style.width = `${this.size}px`;
+                this.element.style.height = `${this.size}px`;
+                this.element.style.left = `${this.x}px`;
+                this.element.style.top = `${this.y}px`;
+                this.element.style.position = 'absolute';
+                this.element.style.zIndex = '1000';
+                
+                // 載入圖片
+                const randomCharacter = characters[Math.floor(Math.random() * characters.length)];
+                this.element.style.backgroundImage = `url(${randomCharacter})`;
+                
+                // 添加到容器中
+                const container = document.querySelector('.container');
+                if (container) {
+                    container.appendChild(this.element);
+                } else {
+                    console.error('找不到容器元素');
+                }
+            }
+
+            draw() {
+                if (this.element) {
+                    this.element.style.left = `${this.x}px`;
+                    this.element.style.top = `${this.y}px`;
+                }
+            }
+
+            contains(x, y) {
+                const halfSize = this.size / 2;
+                const centerX = this.x + halfSize;
+                const centerY = this.y + halfSize;
+                const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+                console.log('碰撞檢測:', {
+                    finger: {x, y},
+                    center: {x: centerX, y: centerY},
+                    distance,
+                    threshold: halfSize
+                });
+                return distance <= halfSize;
+            }
+
+            remove() {
+                if (this.element && this.element.parentNode) {
+                    this.element.parentNode.removeChild(this.element);
+                }
+            }
+
+            bounce() {
+                if (this.element) {
+                    this.element.classList.add('bounce');
+                    setTimeout(() => {
+                        this.element.classList.remove('bounce');
+                    }, 500);
+                }
+            }
+        }
+
+        // 煙火粒子類
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.velocity = {
+                    x: (Math.random() - 0.5) * 15,
+                    y: (Math.random() - 0.5) * 15
+                };
+                this.alpha = 1;
+                this.friction = 0.98;
+                this.gravity = 0.15;
+                this.emoji = this.getRandomEmoji();
+                this.rotation = Math.random() * 360;
+                this.rotationSpeed = (Math.random() - 0.5) * 15;
+                this.scale = 0.8 + Math.random() * 0.4;
+                this.image = new Image();
+                this.image.src = this.emoji;
+            }
+
+            getRandomEmoji() {
+                const emojis = [
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/2728.png', // ✨
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/2b50.png', // ⭐
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f31f.png', // 🌟
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f4ab.png', // 💫
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f4a5.png', // 💥
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f525.png', // 🔥
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f386.png', // 🎆
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f387.png', // 🎇
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f496.png', // 💖
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f49d.png', // 💝
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f495.png', // 💕
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f493.png', // 💓
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f497.png', // 💗
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f498.png', // 💘
+                    'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f49e.png'  // 💞
+                ];
+                return emojis[Math.floor(Math.random() * emojis.length)];
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation * Math.PI / 180);
+                ctx.scale(this.scale, this.scale);
+                ctx.drawImage(this.image, -12, -12, 24, 24);
+                ctx.restore();
+            }
+
+            update() {
+                this.velocity.x *= this.friction;
+                this.velocity.y *= this.friction;
+                this.velocity.y += this.gravity;
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.alpha -= 0.008;
+                this.rotation += this.rotationSpeed;
+            }
+        }
+
+        // 初始化
+        async function init() {
+            try {
+                video = document.getElementById('video');
+                canvas = document.getElementById('canvas');
+                ctx = canvas.getContext('2d');
+                fireworkSound = document.getElementById('fireworkSound');
+
+                // 設置 canvas 尺寸
+                function resizeCanvas() {
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerHeight;
+                    
+                    // 如果遊戲正在進行，重新調整現有方塊的位置
+                    if (isPlaying && boxes.length > 0) {
+                        boxes.forEach(box => {
+                            const maxX = window.innerWidth - box.size - 20;
+                            const maxY = window.innerHeight - box.size - 20;
+                            box.x = Math.max(20, Math.min(maxX, box.x));
+                            box.y = Math.max(20, Math.min(maxY, box.y));
+                            box.draw();
+                        });
+                    }
+                }
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+
+                // 顯示載入中
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('startButton').disabled = true;
+
+                // 初始化手部偵測
+                document.getElementById('status').textContent = '正在載入手部偵測模型...';
+                hands = new Hands({
+                    locateFile: (file) => {
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
+                    }
+                });
+
+                hands.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+
+                hands.onResults(onResults);
+
+                // 設置視訊
+                document.getElementById('status').textContent = '正在啟動視訊鏡頭...';
+                camera = new Camera(video, {
+                    onFrame: async () => {
+                        await hands.send({image: video});
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                await camera.start();
+                modelLoaded = true;
+
+                // 隱藏載入中
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('startButton').disabled = false;
+                document.getElementById('status').textContent = '準備就緒，請點擊開始遊戲';
+
+                // 開始按鈕事件
+                document.getElementById('startButton').addEventListener('click', startGame);
+                // 離開按鈕事件
+                document.getElementById('exitButton').addEventListener('click', exitGame);
+
+            } catch (error) {
+                console.error('初始化錯誤:', error);
+                document.getElementById('status').textContent = '初始化失敗：' + error.message;
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        // 開始遊戲
+        function startGame() {
+            if (!modelLoaded) {
+                document.getElementById('status').textContent = '模型尚未載入完成，請稍候...';
+                return;
+            }
+
+            isPlaying = true;
+            document.getElementById('startButton').style.display = 'none';
+            document.getElementById('exitButton').style.display = 'block';
+            document.getElementById('status').textContent = '遊戲開始！';
+            
+            // 初始化角色
+            boxes = [new Character()];
+        }
+
+        // 離開遊戲
+        function exitGame() {
+            isPlaying = false;
+            
+            // 停止視訊
+            if (camera) {
+                camera.stop();
+            }
+            
+            // 清除所有角色
+            boxes.forEach(box => box.remove());
+            boxes = [];
+            fireworks = [];
+            
+            // 返回上一頁
+            window.history.back();
+        }
+
+        // 創建煙火效果
+        function createFirework(x, y, color) {
+            // 播放音效
+            fireworkSound.currentTime = 0;
+            fireworkSound.play();
+            
+            // 創建煙火粒子
+            for (let i = 0; i < 40; i++) {
+                fireworks.push(new Particle(x, y, color));
+            }
+        }
+
+        // 處理手部偵測結果
+        function onResults(results) {
+            if (!isPlaying) return;
+
+            // 清除畫布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製視訊
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.translate(-canvas.width, 0);
+            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
+
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    // 獲取食指指尖位置
+                    const indexFinger = landmarks[8];
+                    const x = (1 - indexFinger.x) * canvas.width;  // 鏡像處理手指位置
+                    const y = indexFinger.y * canvas.height;
+
+                    // 檢查是否點擊離開按鈕
+                    const exitButton = document.getElementById('exitButton');
+                    const exitRect = exitButton.getBoundingClientRect();
+                    if (x >= exitRect.left && x <= exitRect.right &&
+                        y >= exitRect.top && y <= exitRect.bottom) {
+                        exitGame();
+                        return;
+                    }
+
+                    // 檢查碰撞
+                    let shouldCreateNewBox = false;
+                    boxes = boxes.filter(box => {
+                        if (box.contains(x, y)) {
+                            console.log('碰撞發生！', {
+                                finger: {x, y},
+                                box: {x: box.x, y: box.y, size: box.size}
+                            });
+                            box.bounce();
+                            createFirework(box.x + box.size/2, box.y + box.size/2, '#' + Math.floor(Math.random()*16777215).toString(16));
+                            score++;
+                            document.getElementById('status').textContent = `得分：${score}`;
+                            box.remove();
+                            shouldCreateNewBox = true;
+                            return false;
+                        }
+                        return true;
+                    });
+
+                    // 如果方塊被點擊，立即創建新方塊
+                    if (shouldCreateNewBox) {
+                        setTimeout(() => {
+                            boxes.push(new Character());
+                        }, 100);
+                    }
+
+                    // 繪製手指位置
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                    ctx.beginPath();
+                    ctx.arc(x, y, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // 更新和繪製煙火
+            fireworks = fireworks.filter(particle => {
+                particle.update();
+                particle.draw();
+                return particle.alpha > 0;
+            });
+
+            // 繪製角色
+            boxes.forEach(box => box.draw());
+
+            // 如果沒有角色，添加一個新角色
+            if (boxes.length === 0) {
+                boxes.push(new Character());
+            }
+        }
+
+        // 啟動應用
+        init();
+    </script>
+</body>
+</html> 

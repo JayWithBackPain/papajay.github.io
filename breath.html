@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>呼吸燈</title>
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f8ff;
+            display: flex;
+            min-height: 100vh;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            width: 100%;
+            height: 100vh;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        .controls-panel {
+            width: 300px;
+            padding: 20px;
+            background-color: white;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .display-panel {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        h1 {
+            color: #4a4a4a;
+            margin: 0 0 20px 0;
+            font-size: 1.5em;
+        }
+
+        .character-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: #1a237e;
+            overflow: hidden;
+        }
+
+        .weather-flow {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(45deg, #1a237e, #0d47a1, #01579b);
+            opacity: 0.9;
+            overflow: hidden;
+        }
+
+        .flow-particle {
+            position: absolute;
+            background: radial-gradient(circle at center,
+                rgba(255,255,255,0.95) 0%,
+                rgba(255,255,255,0.8) 50%,
+                rgba(255,255,255,0.4) 100%);
+            border-radius: 50%;
+            transform-origin: center;
+            transition: transform 0.3s ease-out;
+        }
+
+        .controls {
+            margin: 10px auto;
+            padding: 15px;
+            background-color: white;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 500px;
+        }
+
+        .control-group {
+            margin: 15px 0;
+            padding: 10px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+        }
+
+        .control-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            color: #666;
+        }
+
+        .control-value {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            margin: 5px 0;
+        }
+
+        .volume-meter {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 20px;
+        }
+
+        .volume-level {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.1s ease;
+        }
+
+        .permission-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        .permission-button:hover {
+            background-color: #45a049;
+        }
+
+        .status {
+            margin-top: 10px;
+            color: #666;
+        }
+
+        @media (max-height: 700px) {
+            .character-container {
+                width: 60vmin;
+                height: 60vmin;
+            }
+            
+            h1 {
+                font-size: 1.2em;
+                margin: 5px 0;
+            }
+            
+            .controls {
+                padding: 10px;
+                margin: 5px auto;
+            }
+        }
+
+        @media (max-height: 500px) {
+            .character-container {
+                width: 50vmin;
+                height: 50vmin;
+            }
+            
+            h1 {
+                font-size: 1em;
+                margin: 3px 0;
+            }
+            
+            .controls {
+                padding: 8px;
+                margin: 3px auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="controls-panel">
+            <h1>呼吸燈</h1>
+
+            <div class="control-group">
+                <label for="friction">摩擦力：<span id="frictionValue">0.05</span></label>
+                <input type="range" id="friction" min="0" max="0.1" step="0.001" value="0.05">
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>音量啟動閾值</span>
+                    <span class="control-value" id="volumeThresholdValue">10</span>
+                </div>
+                <input type="range" id="volumeThresholdControl" min="0" max="100" value="10" step="1">
+            </div>
+
+            <button class="permission-button" id="startButton" onclick="startAudio()">
+                開始偵測音量
+            </button>
+
+            <div class="volume-meter">
+                <div class="volume-level" id="volumeLevel"></div>
+            </div>
+
+            <div class="status" id="status">請點擊按鈕開始偵測音量</div>
+        </div>
+
+        <div class="display-panel">
+            <div class="character-container">
+                <div class="weather-flow" id="weatherFlow">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let audioContext;
+        let analyser;
+        let microphone;
+        let isListening = false;
+        let animationFrame;
+        let weatherAnimationFrame;
+        let frictionCoefficient = 0.01;
+        let volumeThreshold = 10;
+        let stoppedParticles = new Set();
+        let lastFrictionUpdate = 0;
+        let lastVolumeCheck = 0;
+        let lastSpeedUpdate = 0;
+
+        function createFlowParticles() {
+            let particles = '';
+            for (let i = 0; i < 50; i++) {
+                const x = Math.random() * 100;
+                const y = Math.random() * 100;
+                const size = 20 + Math.random() * 40;
+                particles += `<div class="flow-particle" style="left: ${x}%; top: ${y}%; width: ${size}px; height: ${size}px;"></div>`;
+            }
+            return particles;
+        }
+
+        // 初始化控制條
+        function initControls() {
+            const frictionControl = document.getElementById('friction');
+            const volumeThresholdControl = document.getElementById('volumeThresholdControl');
+            
+            frictionControl.addEventListener('input', (e) => {
+                const newFriction = parseFloat(e.target.value);
+                frictionCoefficient = newFriction;
+                document.getElementById('frictionValue').textContent = newFriction.toFixed(3);
+            });
+
+            volumeThresholdControl.addEventListener('input', (e) => {
+                const newThreshold = parseInt(e.target.value);
+                volumeThreshold = newThreshold;
+                document.getElementById('volumeThresholdValue').textContent = newThreshold;
+            });
+        }
+
+        function initWeatherFlow() {
+            const weatherFlow = document.getElementById('weatherFlow');
+            weatherFlow.innerHTML = createFlowParticles();
+            
+            const particles = document.querySelectorAll('.flow-particle');
+            stoppedParticles.clear();
+            
+            particles.forEach(particle => {
+                const size = parseFloat(particle.style.width);
+                const x = size/2 + Math.random() * (100 - size);
+                const y = size/2 + Math.random() * (100 - size);
+                
+                const speed = 0.002 + Math.random() * 0.002;
+                const angle = Math.random() * Math.PI * 2;
+                const vx = Math.cos(angle) * speed;
+                const vy = Math.sin(angle) * speed;
+                
+                particle.style.left = `${x}%`;
+                particle.style.top = `${y}%`;
+                particle.dataset.vx = vx;
+                particle.dataset.vy = vy;
+                particle.dataset.size = size;
+                particle.dataset.isMoving = 'true';
+            });
+
+            if (weatherAnimationFrame) {
+                cancelAnimationFrame(weatherAnimationFrame);
+            }
+            animateParticles();
+        }
+
+        function animateParticles() {
+            const weatherFlow = document.getElementById('weatherFlow');
+            if (!weatherFlow) return;
+
+            const particles = document.querySelectorAll('.flow-particle');
+            if (particles.length === 0) return;
+
+            const time = Date.now() / 1000;
+            
+            const baseHue = (time * 10) % 360;
+            weatherFlow.style.background = `linear-gradient(45deg,
+                hsl(${baseHue}, 70%, 30%),
+                hsl(${(baseHue + 30) % 360}, 70%, 25%),
+                hsl(${(baseHue + 60) % 360}, 70%, 20%))`;
+            
+            particles.forEach(particle => {
+                let vx = parseFloat(particle.dataset.vx);
+                let vy = parseFloat(particle.dataset.vy);
+                let x = parseFloat(particle.style.left);
+                let y = parseFloat(particle.style.top);
+                const size = parseFloat(particle.dataset.size);
+                const isMoving = particle.dataset.isMoving === 'true';
+                
+                if (isMoving) {
+                    const speed = Math.sqrt(vx * vx + vy * vy);
+                    if (speed > 0) {
+                        const currentFriction = frictionCoefficient * 0.1;
+                        const friction = Math.min(speed, currentFriction);
+                        const ratio = (speed - friction) / speed;
+                        vx *= ratio;
+                        vy *= ratio;
+                        
+                        if (speed < 0.00001) {
+                            vx = 0;
+                            vy = 0;
+                            particle.dataset.isMoving = 'false';
+                            stoppedParticles.add(particle);
+                        }
+                    }
+                    
+                    x += vx;
+                    y += vy;
+                    
+                    const halfSize = size / 2;
+                    let collisionOccurred = false;
+                    
+                    if (x - halfSize < 0) {
+                        x = halfSize;
+                        vx = Math.abs(vx) * 0.8;
+                        collisionOccurred = true;
+                    } else if (x + halfSize > 100) {
+                        x = 100 - halfSize;
+                        vx = -Math.abs(vx) * 0.8;
+                        collisionOccurred = true;
+                    }
+                    
+                    if (y - halfSize < 0) {
+                        y = halfSize;
+                        vy = Math.abs(vy) * 0.8;
+                        collisionOccurred = true;
+                    } else if (y + halfSize > 100) {
+                        y = 100 - halfSize;
+                        vy = -Math.abs(vy) * 0.8;
+                        collisionOccurred = true;
+                    }
+                    
+                    if (!collisionOccurred && Math.random() < 0.01) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const disturbance = 0.0001;
+                        vx += Math.cos(angle) * disturbance;
+                        vy += Math.sin(angle) * disturbance;
+                    }
+                }
+                
+                particle.style.left = `${x}%`;
+                particle.style.top = `${y}%`;
+                particle.dataset.vx = vx;
+                particle.dataset.vy = vy;
+                
+                const hue = (baseHue + (parseFloat(particle.dataset.vx) * 180 / Math.PI)) % 360;
+                particle.style.background = `radial-gradient(circle at center,
+                    hsl(${hue}, 80%, 90%) 0%,
+                    hsl(${hue}, 80%, 80%) 50%,
+                    hsl(${hue}, 80%, 70%) 100%)`;
+            });
+
+            weatherAnimationFrame = requestAnimationFrame(animateParticles);
+        }
+
+        function updateWeatherFlow(volume) {
+            const particles = document.querySelectorAll('.flow-particle');
+            const currentTime = Date.now();
+            
+            if (volume > volumeThreshold && stoppedParticles.size > 0) {
+                if (currentTime - lastVolumeCheck > 50) {
+                    lastVolumeCheck = currentTime;
+                    const particles = Array.from(stoppedParticles);
+                    const numToRestart = Math.min(particles.length, Math.ceil(volume / 5));
+                    
+                    for (let i = 0; i < numToRestart; i++) {
+                        const particle = particles[i];
+                        const speed = (volume / 100) * 0.02;
+                        const angle = Math.random() * Math.PI * 2;
+                        particle.dataset.vx = Math.cos(angle) * speed;
+                        particle.dataset.vy = Math.sin(angle) * speed;
+                        particle.dataset.isMoving = 'true';
+                        stoppedParticles.delete(particle);
+                    }
+                }
+            }
+            
+            if (currentTime - lastSpeedUpdate > 16) {
+                lastSpeedUpdate = currentTime;
+                particles.forEach(particle => {
+                    if (particle.dataset.isMoving === 'true') {
+                        const vx = parseFloat(particle.dataset.vx);
+                        const vy = parseFloat(particle.dataset.vy);
+                        const currentSpeed = Math.sqrt(vx * vx + vy * vy);
+                        
+                        if (currentSpeed < 0.00001) {
+                            const speed = (volume / 100) * 0.02;
+                            const angle = Math.random() * Math.PI * 2;
+                            particle.dataset.vx = Math.cos(angle) * speed;
+                            particle.dataset.vy = Math.sin(angle) * speed;
+                        } else {
+                            const angle = Math.atan2(vy, vx);
+                            const speedIncrease = (volume / 100) * 0.02;
+                            const newSpeed = currentSpeed + speedIncrease;
+                            particle.dataset.vx = Math.cos(angle) * newSpeed;
+                            particle.dataset.vy = Math.sin(angle) * newSpeed;
+                        }
+                    }
+                });
+            }
+        }
+
+        async function startAudio() {
+            if (isListening) {
+                stopAudio();
+                return;
+            }
+
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                analyser.smoothingTimeConstant = 0.3;
+
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+
+                isListening = true;
+                document.getElementById('startButton').textContent = '停止偵測';
+                document.getElementById('status').textContent = '正在偵測音量...';
+                
+                initWeatherFlow();
+                updateVolume();
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                document.getElementById('status').textContent = '無法存取麥克風，請確認權限設定';
+            }
+        }
+
+        function stopAudio() {
+            if (microphone) {
+                microphone.disconnect();
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+            cancelAnimationFrame(animationFrame);
+            cancelAnimationFrame(weatherAnimationFrame);
+            isListening = false;
+            document.getElementById('startButton').textContent = '開始偵測音量';
+            document.getElementById('status').textContent = '已停止偵測';
+            document.getElementById('volumeLevel').style.width = '0%';
+        }
+
+        function updateVolume() {
+            if (!isListening) return;
+
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(dataArray);
+
+            const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+            const volume = Math.min(100, (average / 128) * 100);
+
+            document.getElementById('volumeLevel').style.width = volume + '%';
+            updateWeatherFlow(volume);
+
+            animationFrame = requestAnimationFrame(updateVolume);
+        }
+
+        window.onload = function() {
+            initControls();
+            initWeatherFlow();
+        };
+    </script>
+</body>
+</html> 

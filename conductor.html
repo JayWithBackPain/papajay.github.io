@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>指揮家遊戲</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Microsoft JhengHei', sans-serif;
+        }
+
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #video {
+            position: absolute;
+            width: 320px;
+            height: 240px;
+            object-fit: cover;
+            transform: scaleX(-1);
+            bottom: 20px;
+            right: 20px;
+            border-radius: 8px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            z-index: 1001;
+        }
+
+        #canvas {
+            position: absolute;
+            width: 320px;
+            height: 240px;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1001;
+        }
+
+        .conductor-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1000;
+            background: #000;
+        }
+
+        .conductor-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .controls-panel {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            color: white;
+            z-index: 1001;
+        }
+
+        .control-group {
+            margin: 10px 0;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .control-group input {
+            width: 100px;
+            padding: 5px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+
+        .status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 1001;
+        }
+
+        .start-button {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 15px 30px;
+            font-size: 18px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            z-index: 1000;
+        }
+
+        .start-button:hover {
+            background: #45a049;
+        }
+
+        .start-button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .pause-button {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            padding: 15px 30px;
+            font-size: 18px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            z-index: 1001;
+            display: none;
+        }
+
+        .pause-button:hover {
+            background: #1976D2;
+        }
+
+        .pause-button.paused {
+            background: #4CAF50;
+        }
+
+        .pause-button.paused:hover {
+            background: #45a049;
+        }
+
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            text-align: center;
+            z-index: 1000;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <video id="video" playsinline></video>
+        <canvas id="canvas"></canvas>
+        <div class="conductor-container">
+            <video class="conductor-video" id="conductorVideo" loop muted playsinline>
+                <source src="assets/conduct.mp4" type="video/mp4">
+            </video>
+        </div>
+        <div class="controls-panel">
+            <div class="control-group">
+                <label for="speedFactor">速度係數：<span id="speedFactorValue">30</span></label>
+                <input type="range" id="speedFactor" min="1" max="50" value="30" step="1">
+            </div>
+        </div>
+        <div class="status" id="status">等待開始...</div>
+        <button class="start-button" id="startButton">開始指揮</button>
+        <button class="pause-button" id="pauseButton">暫停</button>
+        <div class="loading" id="loading" style="display: none;">正在載入模型...</div>
+    </div>
+
+    <audio id="music" src="assets/k525.mp3" volume="1.2"></audio>
+
+    <script>
+        let video;
+        let canvas;
+        let ctx;
+        let hands;
+        let camera;
+        let isPlaying = false;
+        let modelLoaded = false;
+        let music;
+        let conductorVideo;
+        let lastHandPosition = null;
+        let lastSpeed = 1;
+        let speedSmoothing = 0.3;
+        let speedFactor = 30;
+        let isPaused = false;
+
+        // 初始化控制條
+        function initControls() {
+            const speedFactorInput = document.getElementById('speedFactor');
+            const pauseButton = document.getElementById('pauseButton');
+            
+            speedFactorInput.addEventListener('input', (e) => {
+                speedFactor = parseInt(e.target.value);
+                document.getElementById('speedFactorValue').textContent = speedFactor;
+            });
+
+            pauseButton.addEventListener('click', togglePause);
+        }
+
+        // 切換播放/暫停狀態
+        function togglePause() {
+            isPaused = !isPaused;
+            const pauseButton = document.getElementById('pauseButton');
+            
+            if (isPaused) {
+                music.pause();
+                conductorVideo.pause();
+                pauseButton.textContent = '繼續';
+                pauseButton.classList.add('paused');
+                document.getElementById('status').textContent = '已暫停';
+            } else {
+                music.play();
+                conductorVideo.play();
+                pauseButton.textContent = '暫停';
+                pauseButton.classList.remove('paused');
+                document.getElementById('status').textContent = '指揮中';
+            }
+        }
+
+        // 初始化
+        async function init() {
+            try {
+                video = document.getElementById('video');
+                canvas = document.getElementById('canvas');
+                ctx = canvas.getContext('2d');
+                music = document.getElementById('music');
+                conductorVideo = document.getElementById('conductorVideo');
+
+                // 設置 canvas 尺寸
+                function resizeCanvas() {
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerHeight;
+                }
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+
+                // 顯示載入中
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('startButton').disabled = true;
+
+                // 初始化手部偵測
+                document.getElementById('status').textContent = '正在載入手部偵測模型...';
+                hands = new Hands({
+                    locateFile: (file) => {
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
+                    }
+                });
+
+                hands.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+
+                hands.onResults(onResults);
+
+                // 設置視訊
+                document.getElementById('status').textContent = '正在啟動視訊鏡頭...';
+                camera = new Camera(video, {
+                    onFrame: async () => {
+                        await hands.send({image: video});
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                await camera.start();
+                modelLoaded = true;
+
+                // 隱藏載入中
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('startButton').disabled = false;
+                document.getElementById('status').textContent = '準備就緒，請點擊開始指揮';
+
+                // 開始按鈕事件
+                document.getElementById('startButton').addEventListener('click', startConducting);
+
+                // 初始化控制條
+                initControls();
+
+            } catch (error) {
+                console.error('初始化錯誤:', error);
+                document.getElementById('status').textContent = '初始化失敗：' + error.message;
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        // 開始指揮
+        function startConducting() {
+            if (!modelLoaded) {
+                document.getElementById('status').textContent = '模型尚未載入完成，請稍候...';
+                return;
+            }
+
+            isPlaying = true;
+            document.getElementById('startButton').style.display = 'none';
+            document.getElementById('pauseButton').style.display = 'block';
+            document.getElementById('status').textContent = '開始指揮！';
+            
+            // 開始播放音樂和影片
+            music.volume = 1.2;
+            music.play();
+            conductorVideo.play();
+        }
+
+        // 計算手部移動速度
+        function calculateSpeed(currentPosition) {
+            if (!lastHandPosition) {
+                lastHandPosition = currentPosition;
+                return 1;
+            }
+
+            const dx = currentPosition.x - lastHandPosition.x;
+            const dy = currentPosition.y - lastHandPosition.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const speed = Math.min(Math.max(distance * speedFactor, 0.5), 2);
+
+            lastHandPosition = currentPosition;
+            return speed;
+        }
+
+        // 處理手部偵測結果
+        function onResults(results) {
+            if (!isPlaying || isPaused) return;
+
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    // 只使用食指和中指計算
+                    const indexFinger = landmarks[8];
+                    const middleFinger = landmarks[12];
+                    
+                    const centerX = (indexFinger.x + middleFinger.x) / 2;
+                    const centerY = (indexFinger.y + middleFinger.y) / 2;
+                    
+                    // 計算速度
+                    const currentSpeed = calculateSpeed({x: centerX, y: centerY});
+                    const smoothedSpeed = lastSpeed + (currentSpeed - lastSpeed) * speedSmoothing;
+                    lastSpeed = smoothedSpeed;
+
+                    // 更新音樂和影片播放速度
+                    music.playbackRate = smoothedSpeed;
+                    conductorVideo.playbackRate = smoothedSpeed;
+
+                    // 更新狀態顯示
+                    document.getElementById('status').textContent = 
+                        `指揮速度：${smoothedSpeed.toFixed(2)}x`;
+                }
+            }
+        }
+
+        // 啟動應用
+        init();
+    </script>
+</body>
+</html> 
